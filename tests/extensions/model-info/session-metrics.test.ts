@@ -251,7 +251,7 @@ test("does not revisit entries for a repeated sync of the same leaf", () => {
   assert.equal(manager.visitCount(), visitsAfterFirstSync);
 });
 
-test("visits each appended suffix entry once", () => {
+test("visits each appended suffix entry once without revisiting cached ancestors", () => {
   const manager = new InstrumentedSessionManager([
     message("user", null, "user"),
     message("assistant", "user", "assistant", usage({ input: 10 })),
@@ -259,6 +259,10 @@ test("visits each appended suffix entry once", () => {
   manager.setLeaf("assistant");
   const tracker = createSessionMetricsTracker();
   tracker.sync(manager);
+  const cachedAncestorVisits = {
+    user: manager.visits.get("user"),
+    assistant: manager.visits.get("assistant"),
+  };
 
   manager.append(
     message("tool", "assistant", "toolResult", usage({ input: 5 })),
@@ -268,6 +272,8 @@ test("visits each appended suffix entry once", () => {
 
   assert.equal(manager.visits.get("tool"), 1);
   assert.equal(manager.visits.get("next"), 1);
+  assert.equal(manager.visits.get("user"), cachedAncestorVisits.user);
+  assert.equal(manager.visits.get("assistant"), cachedAncestorVisits.assistant);
 });
 
 test("returns cached totals when switching to a cached ancestor", () => {
@@ -287,7 +293,7 @@ test("returns cached totals when switching to a cached ancestor", () => {
   assert.equal(manager.visitCount(), visitsAfterInitialSync);
 });
 
-test("visits an unseen sibling once after its cached ancestor", () => {
+test("visits an unseen sibling once without revisiting its cached ancestors", () => {
   const manager = new InstrumentedSessionManager([
     message("user", null, "user"),
     message("assistant", "user", "assistant", usage({ input: 10 })),
@@ -297,11 +303,17 @@ test("visits an unseen sibling once after its cached ancestor", () => {
   manager.setLeaf("tool");
   const tracker = createSessionMetricsTracker();
   tracker.sync(manager);
+  const cachedAncestorVisits = {
+    user: manager.visits.get("user"),
+    assistant: manager.visits.get("assistant"),
+  };
 
   manager.setLeaf("sibling");
 
   assert.deepEqual(tracker.sync(manager), fullActiveBranchMetrics(manager));
   assert.equal(manager.visits.get("sibling"), 1);
+  assert.equal(manager.visits.get("user"), cachedAncestorVisits.user);
+  assert.equal(manager.visits.get("assistant"), cachedAncestorVisits.assistant);
 });
 
 test("counts compaction and branch-summary usage", () => {
