@@ -133,19 +133,23 @@ class ModelInfoHarness {
   readonly publications: ModelInfoState[] = [];
   readonly manager: InstrumentedSessionManager;
   contextTokens = 100;
+  private model = {
+    provider: "openai",
+    id: "test-model",
+    name: "Test model",
+    contextWindow: 1_000,
+    reasoning: false,
+  };
   private readonly context: ExtensionContext;
 
   constructor(entries: SessionEntry[]) {
     this.manager = new InstrumentedSessionManager(entries);
     this.manager.leafId = entries.at(-1)?.id ?? null;
+    const thisHarness = this;
     this.context = {
       sessionManager: this.manager,
-      model: {
-        provider: "openai",
-        id: "test-model",
-        name: "Test model",
-        contextWindow: 1_000,
-        reasoning: false,
+      get model() {
+        return thisHarness.model;
       },
       getContextUsage: () => ({
         tokens: this.contextTokens,
@@ -196,6 +200,11 @@ class ModelInfoHarness {
       listener(undefined);
     }
   }
+
+  async selectModel(model: typeof this.model) {
+    this.model = model;
+    await this.emit("model_select", { model });
+  }
 }
 
 test("synchronizes initial history and waits for turn_end before counting an assistant message", async () => {
@@ -234,7 +243,7 @@ test("synchronizes initial history and waits for turn_end before counting an ass
   assert.equal(harness.manager.branchReads, 0);
 });
 
-test("refresh and agent events publish live context without traversing history", async () => {
+test("repeated ordinary events publish live state without traversing history", async () => {
   const harness = new ModelInfoHarness([
     user("user", null),
     assistant("assistant", "user", usage({ input: 10 })),
@@ -246,14 +255,42 @@ test("refresh and agent events publish live context without traversing history",
   harness.refresh();
   assert.equal(harness.state.contextTokens, 250);
 
+  harness.contextTokens = 375;
+  harness.refresh();
+  assert.equal(harness.state.contextTokens, 375);
+
   harness.contextTokens = 500;
-  await harness.emit("agent_start");
+  await harness.selectModel({
+    provider: "anthropic",
+    id: "new-model",
+    name: "New model",
+    contextWindow: 2_000,
+    reasoning: true,
+  });
   assert.equal(harness.state.contextTokens, 500);
+  assert.equal(harness.state.provider, "anthropic");
+  assert.equal(harness.state.modelId, "new-model");
+  assert.equal(harness.state.modelName, "New model");
+  assert.equal(harness.state.thinking, "low");
+
+  harness.contextTokens = 625;
+  await harness.emit("agent_start");
+  assert.equal(harness.state.contextTokens, 625);
   assert.equal(harness.state.generating, true);
 
   harness.contextTokens = 750;
-  await harness.emit("agent_settled");
+  await harness.emit("agent_start");
   assert.equal(harness.state.contextTokens, 750);
+  assert.equal(harness.state.generating, true);
+
+  harness.contextTokens = 875;
+  await harness.emit("agent_settled");
+  assert.equal(harness.state.contextTokens, 875);
+  assert.equal(harness.state.generating, false);
+
+  harness.contextTokens = 950;
+  await harness.emit("agent_settled");
+  assert.equal(harness.state.contextTokens, 950);
   assert.equal(harness.state.generating, false);
   assert.equal(harness.manager.visitCount(), visitsAfterStart);
   assert.equal(harness.manager.branchReads, 0);
