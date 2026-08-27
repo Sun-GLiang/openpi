@@ -222,11 +222,10 @@ function runScenario(entries: number, toolLoops: number) {
     fullScan();
     appendToolLoop(fullScanManager, index);
     appendToolLoop(trackerManager, index);
+    // turn_end follows persistence for every assistant/tool-result loop.
+    trackerMetrics = syncTracker();
+    assert.deepEqual(fullScan(), trackerMetrics);
   }
-
-  // turn_end runs after all entries have been appended.
-  trackerMetrics = syncTracker();
-  assert.deepEqual(fullScan(), trackerMetrics);
 
   // agent_settled only performs an ordinary refresh, so the tracker is not
   // synchronized again; its cached totals remain the current session state.
