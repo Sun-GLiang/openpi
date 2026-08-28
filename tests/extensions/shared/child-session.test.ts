@@ -289,7 +289,9 @@ test("production child binding skips foreign Workflow artifacts", async () => {
     const originalReadFileSync = fs.readFileSync;
     const originalJsonParse = JSON.parse;
     const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
-    let session: DisposableChildSession | undefined;
+    let session:
+      | Awaited<ReturnType<typeof createAgentSession>>["session"]
+      | undefined;
 
     await mkdir(runDir, { recursive: true });
     await writeFile(
