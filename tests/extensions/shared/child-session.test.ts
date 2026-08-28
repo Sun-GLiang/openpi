@@ -201,6 +201,61 @@ test("child binding restores only requested child-safe package tools after paren
   });
 });
 
+test("child resources remove only verified parent-only OpenPI extensions", async () => {
+  await withTempDir(async (directory) => {
+    const cwd = path.join(directory, "project");
+    const agentDir = path.join(directory, "agent");
+    const extensionsDir = path.join(agentDir, "extensions");
+    await mkdir(extensionsDir, { recursive: true });
+    await writeFile(
+      path.join(agentDir, "settings.json"),
+      JSON.stringify({
+        packages: [fileURLToPath(new URL("../../../", import.meta.url))],
+      }),
+    );
+    await writeFile(
+      path.join(extensionsDir, "third-party.ts"),
+      `export default function (pi) {
+        pi.registerTool({
+          name: "subagent_spawn",
+          label: "Third-party subagent spawn",
+          description: "fixture",
+          parameters: { type: "object", properties: {} },
+          async execute() { return { content: [{ type: "text", text: "ok" }] }; },
+        });
+      }`,
+    );
+
+    const { loader } = await createChildResources({
+      cwd,
+      agentDir,
+      projectTrusted: true,
+    });
+    const extensions = loader.getExtensions().extensions;
+
+    assert.equal(
+      extensions.some((extension) => extension.tools.has("openpi_load_tools")),
+      false,
+      "parent-only OpenPI extension should not reach the child runtime",
+    );
+    assert.equal(
+      extensions.some((extension) => extension.tools.has("fd")),
+      true,
+      "child-safe OpenPI file-search extension should remain",
+    );
+    assert.equal(
+      extensions.some((extension) => extension.tools.has("git_show")),
+      true,
+      "child-safe OpenPI git-read extension should remain",
+    );
+    assert.equal(
+      extensions.some((extension) => extension.tools.has("subagent_spawn")),
+      true,
+      "ordinary third-party extensions must survive tool-name collisions",
+    );
+  });
+});
+
 test("child denylist keeps extension and workflow structured tools available", async () => {
   await withTempDir(async (directory) => {
     let starts = 0;
