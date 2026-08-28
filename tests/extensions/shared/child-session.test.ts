@@ -8,6 +8,8 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import test from "node:test";
@@ -253,6 +255,127 @@ test("child resources remove only verified parent-only OpenPI extensions", async
       true,
       "ordinary third-party extensions must survive tool-name collisions",
     );
+  });
+});
+
+test("production child binding skips foreign Workflow artifacts", async () => {
+  await withTempDir(async (directory) => {
+    const cwd = path.join(directory, "project");
+    const agentDir = path.join(directory, "agent");
+    const runDir = path.join(agentDir, "workflows", "wf_f0e1");
+    const artifactContents = [
+      JSON.stringify({
+        runId: "wf_f0e1",
+        sessionId: "foreign-session",
+        status: "completed",
+        startedAt: 1,
+        finishedAt: 2,
+        agents: [],
+        phases: [],
+        resultArtifact: "result.json",
+        transcriptArtifact: "transcripts.json",
+      }),
+      JSON.stringify({ result: "foreign result" }),
+      JSON.stringify({}),
+    ];
+    const artifactPaths = new Set([
+      path.join(runDir, "workflow.json"),
+      path.join(runDir, "result.json"),
+      path.join(runDir, "transcripts.json"),
+    ]);
+    let readCalls = 0;
+    let readBytes = 0;
+    let workflowParses = 0;
+    const originalReadFileSync = fs.readFileSync;
+    const originalJsonParse = JSON.parse;
+    const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
+
+    await mkdir(runDir, { recursive: true });
+    await writeFile(
+      path.join(agentDir, "settings.json"),
+      JSON.stringify({
+        packages: [fileURLToPath(new URL("../../../", import.meta.url))],
+      }),
+    );
+    await Promise.all(
+      ["workflow.json", "result.json", "transcripts.json"].map((name, index) =>
+        writeFile(path.join(runDir, name), artifactContents[index]!),
+      ),
+    );
+
+    Object.defineProperty(fs, "readFileSync", {
+      value: (...args: Parameters<typeof originalReadFileSync>) => {
+        const content = originalReadFileSync(...args);
+        const filePath = args[0];
+        if (typeof filePath === "string" && artifactPaths.has(filePath)) {
+          readCalls++;
+          readBytes += Buffer.byteLength(
+            typeof content === "string" ? content : content.toString(),
+          );
+        }
+        return content;
+      },
+    });
+    syncBuiltinESMExports();
+    JSON.parse = (text, reviver) => {
+      if (text === artifactContents[0]) {
+        workflowParses++;
+      }
+      return originalJsonParse(text, reviver);
+    };
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+
+    try {
+      const { loader, settingsManager } = await createChildResources({
+        cwd,
+        agentDir,
+        projectTrusted: true,
+      });
+      const structuredOutput = defineTool({
+        name: "structured_output",
+        label: "Structured Output",
+        description: "fixture structured result",
+        parameters: Type.Object({ value: Type.String() }),
+        async execute(_id, params) {
+          return {
+            content: [{ type: "text", text: params.value }],
+            details: {},
+          };
+        },
+      });
+      const { session } = await createAgentSession({
+        cwd,
+        agentDir,
+        resourceLoader: loader,
+        settingsManager,
+        sessionManager: SessionManager.inMemory(cwd),
+        customTools: [structuredOutput],
+        ...childToolPolicy(),
+      });
+      await bindChildSessionExtensions(session);
+
+      assert.equal(
+        session.getActiveToolNames().includes("structured_output"),
+        true,
+        "dynamically registered workflow output tool should remain available",
+      );
+      assert.equal(readCalls, 0);
+      assert.equal(readBytes, 0);
+      assert.equal(workflowParses, 0);
+
+      await shutdownAndDisposeChildSession(session);
+    } finally {
+      Object.defineProperty(fs, "readFileSync", {
+        value: originalReadFileSync,
+      });
+      syncBuiltinESMExports();
+      JSON.parse = originalJsonParse;
+      if (originalAgentDir === undefined) {
+        delete process.env.PI_CODING_AGENT_DIR;
+      } else {
+        process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+      }
+    }
   });
 });
 
