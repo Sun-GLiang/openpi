@@ -289,6 +289,7 @@ test("production child binding skips foreign Workflow artifacts", async () => {
     const originalReadFileSync = fs.readFileSync;
     const originalJsonParse = JSON.parse;
     const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
+    let session: DisposableChildSession | undefined;
 
     await mkdir(runDir, { recursive: true });
     await writeFile(
@@ -343,7 +344,7 @@ test("production child binding skips foreign Workflow artifacts", async () => {
           };
         },
       });
-      const { session } = await createAgentSession({
+      ({ session } = await createAgentSession({
         cwd,
         agentDir,
         resourceLoader: loader,
@@ -351,7 +352,7 @@ test("production child binding skips foreign Workflow artifacts", async () => {
         sessionManager: SessionManager.inMemory(cwd),
         customTools: [structuredOutput],
         ...childToolPolicy(),
-      });
+      }));
       await bindChildSessionExtensions(session);
 
       assert.equal(
@@ -362,9 +363,8 @@ test("production child binding skips foreign Workflow artifacts", async () => {
       assert.equal(readCalls, 0);
       assert.equal(readBytes, 0);
       assert.equal(workflowParses, 0);
-
-      await shutdownAndDisposeChildSession(session);
     } finally {
+      if (session) await shutdownAndDisposeChildSession(session);
       Object.defineProperty(fs, "readFileSync", {
         value: originalReadFileSync,
       });
