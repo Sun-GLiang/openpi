@@ -476,14 +476,6 @@ export const CHILD_EXCLUDED_TOOL_NAMES = [
   "context_pivot",
 ] as const;
 
-function canonicalExistingPath(candidate: string) {
-  try {
-    return realpathSync(candidate);
-  } catch {
-    return undefined;
-  }
-}
-
 const PARENT_ONLY_OPENPI_EXTENSION_PATHS = new Set(
   (Object.keys(OPENPI_TOOL_SURFACE) as OpenPiToolOwner[])
     .filter((owner) => {
